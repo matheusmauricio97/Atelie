@@ -59,7 +59,7 @@ h3.day{font-size:15px;font-weight:600;color:var(--muted);margin-top:20px;font-fa
 .card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:14px 16px;box-shadow:var(--shadow)}
 button.card{width:100%;text-align:left;cursor:pointer}
 .stack>*+*{margin-top:10px}
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;background:var(--brand);color:var(--on-brand);border:0;border-radius:12px;padding:12px 18px;font-weight:600;cursor:pointer;min-height:46px}
+.btn{text-decoration:none;display:inline-flex;align-items:center;justify-content:center;gap:8px;background:var(--brand);color:var(--on-brand);border:0;border-radius:12px;padding:12px 18px;font-weight:600;cursor:pointer;min-height:46px}
 .btn.block{width:100%}
 .btn.sm{padding:8px 12px;min-height:38px;font-size:14px;border-radius:10px}
 .btn.ghost{background:transparent;color:var(--brand);border:1.5px solid var(--line)}
@@ -145,7 +145,7 @@ const SUPABASE_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSI
 const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
 let authId=null;
 const cachedName=()=>{try{return localStorage.getItem('atelie_nome')||'Ateliê';}catch(e){return 'Ateliê';}};
-let S={cfg:{name:cachedName(),pixKey:'',city:'',cancelHours:24,pixHoldMin:30,pedidoHoldHoras:24},users:[],plans:[],cycles:[],classes:[],bookings:[],products:[],payments:[],me:null};
+let S={cfg:{name:cachedName(),pixKey:'',city:'',cancelHours:24,pixHoldMin:30,pedidoHoldHoras:24},users:[],plans:[],cycles:[],classes:[],bookings:[],products:[],payments:[],invites:[],me:null};
 let ui={tab:null,filter:'todas',payFilter:'pendentes',sheet:null,cart:{},q:'',auth:'login',busy:false,booting:true};
 
 /* Lê tudo do servidor e converte para o formato que as telas usam */
@@ -159,10 +159,11 @@ async function refresh(){
     sb.from('aulas_agenda').select('*').gte('data_hora',since).order('data_hora'),
     sb.from('reservas').select('*'),
     sb.from('produtos').select('*').order('nome'),
-    sb.from('pagamentos').select('*').order('criado_em',{ascending:false})
+    sb.from('pagamentos').select('*').order('criado_em',{ascending:false}),
+    sb.from('convites').select('*').order('criado_em',{ascending:false})
   ]);
-  const bad=rs.find(r=>r.error);if(bad)throw bad.error;
-  const [at,pf,pl,cy,au,rv,pr,pg]=rs.map(r=>r.data||[]);
+  const bad=rs.slice(0,8).find(r=>r.error);if(bad)throw bad.error;
+  const [at,pf,pl,cy,au,rv,pr,pg,cv]=rs.map(r=>r.data||[]);
   const a=at[0];
   if(a){S.cfg={id:a.id,name:a.nome,pixKey:a.chave_pix,city:a.cidade,cancelHours:a.cancelar_ate_horas,pixHoldMin:a.reserva_pix_minutos,pedidoHoldHoras:a.pedido_expira_horas};try{localStorage.setItem('atelie_nome',a.nome);}catch(e){}}
   S.users=pf.map(p=>({id:p.id,name:p.nome,email:p.email||'',phone:p.telefone||'',role:p.papel==='admin'?'admin':'aluna'}));
@@ -171,6 +172,7 @@ async function refresh(){
   S.cycles=cy.map(c=>({id:c.id,userId:c.aluna_id,planId:c.plano_id,price:Number(c.preco),start:c.inicio,end:c.fim,total:c.total_aulas,saldo:c.saldo_aulas,status:c.status}));
   S.classes=au.map(c=>({id:c.id,type:c.tipo==='workshop'?'workshop':'aula',theme:c.tema,date:c.data_hora,spots:c.vagas,price:Number(c.preco),canceled:c.cancelada,ocupadas:c.ocupadas}));
   S.bookings=rv.map(b=>({id:b.id,userId:b.aluna_id,classId:b.aula_id,payment:b.forma_pagamento,cycleId:b.ciclo_id,status:b.status,createdAt:b.criado_em}));
+  S.invites=cv.filter(c=>!c.usado&&new Date(c.expira_em)>new Date()).map(c=>({id:c.id,name:c.nome,email:c.email,phone:c.telefone||'',code:c.codigo}));
   S.products=pr.map(p=>({id:p.id,name:p.nome,price:Number(p.preco),stock:p.estoque,active:p.ativo}));
   S.payments=pg.map(p=>({id:p.id,userId:p.aluna_id,kind:p.tipo,refId:p.ref_id,amount:Number(p.valor),status:p.status,createdAt:p.criado_em,paidAt:p.pago_em,informed:p.aluna_avisou,label:p.descricao,why:p.motivo,
     items:p.tipo==='material'&&Array.isArray(p.itens)?p.itens.map(i=>({pid:i.produto_id,name:i.nome,qty:i.qtd,price:Number(i.preco)})):null}));
@@ -188,6 +190,7 @@ function loginErr(e){
   const m=String((e&&e.message)||'');
   if(/Invalid login/i.test(m))return 'E-mail ou senha incorretos.';
   if(/already registered/i.test(m))return 'Já existe uma conta com esse e-mail.';
+  if(/Database error saving new user|não autorizado/i.test(m))return 'Convite inválido. Confira o e-mail e o código que a administradora enviou.';
   if(/not confirmed/i.test(m))return 'Confirme seu e-mail antes de entrar.';
   if(/at least 6/i.test(m))return 'A senha precisa ter pelo menos 6 caracteres.';
   return friendly(e);
@@ -271,20 +274,19 @@ function vAuth(){
   const login=ui.auth==='login';
   return `<main class="auth">
     <div class="wm" style="margin-bottom:28px">${esc(S.cfg.name)}</div>
-    <h1>${login?'Entre para reservar sua aula':'Crie sua conta de aluna'}</h1>
-    <p class="muted" style="margin:0 0 20px">Aulas, materiais e mensalidade do ateliê em um só lugar.</p>
+    <h1>${login?'Entre para reservar sua aula':'Primeiro acesso'}</h1>
+    <p class="muted" style="margin:0 0 20px">${login?'Aulas, materiais e mensalidade do ateliê em um só lugar.':'Use o e-mail e o código que a administradora enviou para criar a sua senha.'}</p>
     ${login?`<form class="stack" data-form="login">
       <label class="f">E-mail<input name="email" type="email" required autocomplete="username"></label>
       <label class="f">Senha<input name="password" type="password" required autocomplete="current-password"></label>
       <button class="btn block" type="submit">Entrar</button>
     </form>
-    <p style="text-align:center"><button class="btn ghost sm" data-action="auth" data-view="signup">Criar conta de aluna</button></p>`
+    <p style="text-align:center"><button class="btn ghost sm" data-action="auth" data-view="signup">Primeiro acesso</button></p>`
     :`<form class="stack" data-form="signup">
-      <label class="f">Nome completo<input name="name" required autocomplete="name"></label>
       <label class="f">E-mail<input name="email" type="email" required autocomplete="username"></label>
-      <label class="f">Telefone<input name="phone" type="tel" autocomplete="tel"></label>
-      <label class="f">Senha (mínimo 6 caracteres)<input name="password" type="password" minlength="6" required autocomplete="new-password"></label>
-      <button class="btn block" type="submit">Criar conta</button>
+      <label class="f">Código do convite<input name="codigo" inputmode="numeric" autocomplete="one-time-code" placeholder="6 números"></label>
+      <label class="f">Crie uma senha (mínimo 6 caracteres)<input name="password" type="password" minlength="6" required autocomplete="new-password"></label>
+      <button class="btn block" type="submit">Criar minha conta</button>
     </form>
     <p style="text-align:center"><button class="btn ghost sm" data-action="auth" data-view="login">Já tenho conta</button></p>`}
   </main>`;
@@ -404,6 +406,30 @@ function vAulas(){
     (up.length?`<div class="list">${up.map(row).join('')}</div>`:empty('Nenhuma aula futura','Toque em Nova para publicar a agenda da semana.'))+
     (past.length?`<h3 class="day">Anteriores</h3><div class="list">${past.map(row).join('')}</div>`:'');
 }
+function invitesBlock(){
+  if(!S.invites.length)return '';
+  return `<div class="card"><b>Convites pendentes</b><p class="muted small" style="margin:4px 0 10px">A aluna usa o e-mail e o código para criar a própria senha.</p><div class="list">${S.invites.map(c=>`<div class="row between"><span class="grow"><b>${esc(c.name)}</b><span class="muted small" style="display:block">${esc(c.email)} · código ${esc(c.code)}</span></span><button class="btn ghost sm" data-action="open" data-sheet="invite" data-id="${c.id}">Enviar</button></div>`).join('')}</div></div>`;
+}
+function inviteMsg(c){
+  const url=location.origin+location.pathname;
+  return `Olá, ${c.name.split(' ')[0]}! Seu acesso ao app do ${S.cfg.name} está pronto. Abra ${url}, toque em "Primeiro acesso" e use o e-mail ${c.email} com o código ${c.code} para criar a sua senha. O código vale por 14 dias.`;
+}
+function waLink(c){let d=(c.phone||'').replace(/\D/g,'');if(d&&d.length<=11)d='55'+d;return `https://wa.me/${d}?text=${encodeURIComponent(inviteMsg(c))}`;}
+function sInvite(c){
+  return `<div class="ticket"><div class="muted small">Código de ${esc(c.name)}</div><div class="amt" style="letter-spacing:.12em">${esc(c.code)}</div><p class="small muted" style="margin:8px 0 0">E-mail: ${esc(c.email)}</p></div>
+  <div class="code" style="max-height:none">${esc(inviteMsg(c))}</div>
+  <a class="btn block" href="${esc(waLink(c))}" target="_blank" rel="noopener">Enviar pelo WhatsApp</a>
+  <button class="btn ghost block" data-action="copy-invite" data-id="${c.id}">Copiar mensagem</button>
+  <button class="btn danger block" data-action="cancel-invite" data-id="${c.id}">Cancelar convite</button>`;
+}
+function fInvite(){
+  return `<form class="stack" data-form="inviteForm">
+  <label class="f">Nome completo<input name="name" required></label>
+  <label class="f">E-mail<input name="email" type="email" required></label>
+  <label class="f">Telefone (WhatsApp)<input name="phone" type="tel"></label>
+  <p class="small muted" style="margin:0">Você recebe um código para enviar à aluna. Ela cria a própria senha no primeiro acesso.</p>
+  <button class="btn block" type="submit">Gerar convite</button></form>`;
+}
 function listStudents(){
   const q=ui.q.trim().toLowerCase();
   const st=S.users.filter(u=>u.role==='aluna'&&(!q||u.name.toLowerCase().includes(q)||u.email.toLowerCase().includes(q))).sort((a,b)=>a.name.localeCompare(b.name));
@@ -411,7 +437,7 @@ function listStudents(){
   return st.length?st.map(u=>{const s=planStatus(u.id);return `<button class="card row between" data-action="open" data-sheet="student" data-id="${u.id}"><span class="grow"><b>${esc(u.name)}</b><span class="muted small" style="display:block">${esc(u.email)}</span></span><span class="tag ${lab[s][0]}">${lab[s][1]}</span></button>`;}).join(''):empty('Nenhuma aluna encontrada','Cadastre uma aluna ou mude a busca.');
 }
 function vAlunas(){
-  return `<div class="row between"><h2 class="sec" style="margin:0">Alunas</h2></div>
+  return `<div class="row between"><h2 class="sec" style="margin:0">Alunas</h2><button class="btn sm" data-action="open" data-sheet="inviteForm">${I('plus',16)} Nova</button></div>${invitesBlock()}
   <input class="search" id="q" type="search" placeholder="Buscar por nome ou e-mail" value="${esc(ui.q)}" aria-label="Buscar aluna"><div class="list" id="studentList">${listStudents()}</div>`;
 }
 function vEstoque(){
@@ -444,6 +470,8 @@ function sheetHtml(u){
   else if(s.type==='studentForm'){const a=s.id?S.users.find(x=>x.id===s.id):null;title=a?'Editar aluna':'Nova aluna';body=fStudent(a);}
   else if(s.type==='student'){const a=S.users.find(x=>x.id===s.id);if(!a)return '';title=a.name;body=sStudent(a);}
   else if(s.type==='settings'){title='Ajustes';body=sSettings();}
+  else if(s.type==='inviteForm'){title='Nova aluna';body=fInvite();}
+  else if(s.type==='invite'){const c=S.invites.find(x=>x.id===s.id);if(!c)return '';title='Convite da aluna';body=sInvite(c);}
   else if(s.type==='planForm'){const p=s.id?S.plans.find(x=>x.id===s.id):null;title=p?'Editar plano':'Novo plano';body=fPlan(p);}
   return `<div class="overlay" data-action="close-sheet"></div><section class="sheet" role="dialog" aria-modal="true" aria-label="${esc(title)}" tabindex="-1"><div class="grab"></div><div class="head"><h2>${esc(title)}</h2>${close}</div>${body}</section>`;
 }
@@ -510,7 +538,7 @@ function fStudent(a){
   return `<form class="stack" data-form="studentForm"><input type="hidden" name="id" value="${a.id}">
   <label class="f">Nome completo<input name="name" required value="${esc(a.name)}"></label>
   <label class="f">Telefone<input name="phone" type="tel" value="${esc(a.phone)}"></label>
-  <p class="small muted" style="margin:0">E-mail da conta: ${esc(a.email)}. As alunas criam a própria conta e senha pelo app.</p>
+  <p class="small muted" style="margin:0">E-mail da conta: ${esc(a.email)}. Ela define a própria senha no primeiro acesso, com um convite.</p>
   <button class="btn block" type="submit">Salvar dados</button></form>`;
 }
 function sStudent(a){
@@ -642,6 +670,9 @@ async function act(a,d){
       const selectCode=()=>{const el=$('#pixcode');if(el){const r=document.createRange();r.selectNodeContents(el);const s=getSelection();s.removeAllRanges();s.addRange(r);}toast('Selecionei o código. Copie manualmente.');};
       if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(code).then(done,selectCode);}else selectCode();
       return;}
+    case 'copy-invite':{const c=S.invites.find(x=>x.id===d.id);if(!c)return;const m=inviteMsg(c);
+      if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(m).then(()=>toast('Mensagem copiada.'),()=>toast('Não consegui copiar. Selecione o texto e copie.'));}else toast('Selecione o texto e copie.');return;}
+    case 'cancel-invite':return run(()=>ck(sb.from('convites').delete().eq('id',d.id)),'Convite cancelado.',()=>{ui.sheet=null;});
     case 'informed':return run(()=>rpc('avisar_pagamento',{p_id:d.id}),'Ateliê avisado. Aguarde a confirmação.');
     case 'subscribe':return run(()=>rpc('assinar_plano',{p_plano:d.plan}),null,id=>{ui.sheet={type:'pix',id};});
     case 'pay-confirm':return run(()=>rpc('confirmar_pagamento',{p_id:d.id}),'Pagamento confirmado.');
@@ -655,8 +686,9 @@ async function act(a,d){
 }
 async function submitForm(name,v){
   switch(name){
+    case 'inviteForm':return run(()=>rpc('criar_convite',{p_nome:v.name,p_email:v.email,p_telefone:v.phone||''}),'Convite criado. Envie o código para a aluna.',id=>{ui.sheet={type:'invite',id};});
     case 'login':return enter(()=>sb.auth.signInWithPassword({email:v.email.trim(),password:v.password}));
-    case 'signup':return enter(()=>sb.auth.signUp({email:v.email.trim(),password:v.password,options:{data:{nome:v.name.trim(),telefone:v.phone||''}}}));
+    case 'signup':return enter(()=>sb.auth.signUp({email:v.email.trim(),password:v.password,options:{data:{codigo:(v.codigo||'').trim()}}}));
     case 'classForm':{
       const date=new Date(v.date);if(isNaN(date)){toast('Informe uma data válida.');return;}
       const spots=Math.max(1,parseInt(v.spots,10)||1),price=Math.max(0,parseFloat(v.price)||0);
