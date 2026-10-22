@@ -123,7 +123,8 @@ button.card{width:100%;text-align:left;cursor:pointer}
 .code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;word-break:break-all;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px;text-align:left;max-height:84px;overflow:auto;color:var(--muted)}
 label.f{display:block;font-weight:600;font-size:14px}
 label.f>input,label.f>select{display:block;width:100%;margin-top:6px;padding:12px;border-radius:12px;border:1.5px solid var(--line);background:var(--surface);min-height:46px;font-weight:400;font-size:16px}
-label.f>input:focus,label.f>select:focus{outline:none;border-color:var(--brand)}
+label.f>textarea{display:block;width:100%;margin-top:6px;padding:12px;border-radius:12px;border:1.5px solid var(--line);background:var(--surface);font-weight:400;font-size:16px;resize:vertical;min-height:84px}
+label.f>input:focus,label.f>select:focus,label.f>textarea:focus{outline:none;border-color:var(--brand)}
 form.stack>*+*{margin-top:12px}
 .search{width:100%;padding:12px;border-radius:12px;border:1.5px solid var(--line);background:var(--surface)}
 .list>*+*{margin-top:10px}
@@ -145,7 +146,7 @@ const SUPABASE_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSI
 const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
 let authId=null;
 const cachedName=()=>{try{return localStorage.getItem('atelie_nome')||'Ateliê';}catch(e){return 'Ateliê';}};
-let S={cfg:{name:cachedName(),pixKey:'',city:'',cancelHours:24,pixHoldMin:30,pedidoHoldHoras:24},users:[],plans:[],cycles:[],classes:[],bookings:[],products:[],payments:[],invites:[],me:null};
+let S={cfg:{name:cachedName(),pixKey:'',city:'',cancelHours:24,pixHoldMin:30,pedidoHoldHoras:24},users:[],plans:[],cycles:[],classes:[],bookings:[],products:[],payments:[],invites:[],inscritas:[],me:null};
 let ui={tab:null,filter:'todas',payFilter:'pendentes',sheet:null,cart:{},q:'',auth:'login',busy:false,booting:true};
 
 /* Lê tudo do servidor e converte para o formato que as telas usam */
@@ -160,19 +161,21 @@ async function refresh(){
     sb.from('reservas').select('*'),
     sb.from('produtos').select('*').order('nome'),
     sb.from('pagamentos').select('*').order('criado_em',{ascending:false}),
-    sb.from('convites').select('*').order('criado_em',{ascending:false})
+    sb.from('convites').select('*').order('criado_em',{ascending:false}),
+    sb.from('aulas_inscritas').select('*')
   ]);
   const bad=rs.slice(0,8).find(r=>r.error);if(bad)throw bad.error;
-  const [at,pf,pl,cy,au,rv,pr,pg,cv]=rs.map(r=>r.data||[]);
+  const [at,pf,pl,cy,au,rv,pr,pg,cv,ins]=rs.map(r=>r.data||[]);
   const a=at[0];
   if(a){S.cfg={id:a.id,name:a.nome,pixKey:a.chave_pix,city:a.cidade,cancelHours:a.cancelar_ate_horas,pixHoldMin:a.reserva_pix_minutos,pedidoHoldHoras:a.pedido_expira_horas};try{localStorage.setItem('atelie_nome',a.nome);}catch(e){}}
-  S.users=pf.map(p=>({id:p.id,name:p.nome,email:p.email||'',phone:p.telefone||'',role:p.papel==='admin'?'admin':'aluna'}));
+  S.users=pf.map(p=>({id:p.id,name:p.nome,email:p.email||'',phone:p.telefone||'',role:p.papel==='admin'?'admin':p.papel==='funcionario'?'staff':'aluna'}));
   S.me=S.users.find(u=>u.id===authId)||null;
   S.plans=pl.map(p=>({id:p.id,name:p.nome,price:Number(p.preco),aulas:p.aulas_por_mes,active:p.ativo}));
   S.cycles=cy.map(c=>({id:c.id,userId:c.aluna_id,planId:c.plano_id,price:Number(c.preco),start:c.inicio,end:c.fim,total:c.total_aulas,saldo:c.saldo_aulas,status:c.status}));
-  S.classes=au.map(c=>({id:c.id,type:c.tipo==='workshop'?'workshop':'aula',theme:c.tema,date:c.data_hora,spots:c.vagas,price:Number(c.preco),canceled:c.cancelada,ocupadas:c.ocupadas}));
+  S.classes=au.map(c=>({id:c.id,type:c.tipo==='workshop'?'workshop':'aula',theme:c.tema,date:c.data_hora,spots:c.vagas,price:Number(c.preco),canceled:c.cancelada,ocupadas:c.ocupadas,obs:c.observacao||''}));
+  S.inscritas=ins.map(i=>({id:i.reserva_id,classId:i.aula_id,userId:i.aluna_id,name:i.aluna_nome,status:i.status}));
   S.bookings=rv.map(b=>({id:b.id,userId:b.aluna_id,classId:b.aula_id,payment:b.forma_pagamento,cycleId:b.ciclo_id,status:b.status,createdAt:b.criado_em}));
-  S.invites=cv.filter(c=>!c.usado&&new Date(c.expira_em)>new Date()).map(c=>({id:c.id,name:c.nome,email:c.email,phone:c.telefone||'',code:c.codigo}));
+  S.invites=cv.filter(c=>!c.usado&&new Date(c.expira_em)>new Date()).map(c=>({id:c.id,name:c.nome,email:c.email,phone:c.telefone||'',code:c.codigo,role:c.papel==='funcionario'?'staff':'aluna'}));
   S.products=pr.map(p=>({id:p.id,name:p.nome,price:Number(p.preco),stock:p.estoque,active:p.ativo}));
   S.payments=pg.map(p=>({id:p.id,userId:p.aluna_id,kind:p.tipo,refId:p.ref_id,amount:Number(p.valor),status:p.status,createdAt:p.criado_em,paidAt:p.pago_em,informed:p.aluna_avisou,label:p.descricao,why:p.motivo,
     items:p.tipo==='material'&&Array.isArray(p.itens)?p.itens.map(i=>({pid:i.produto_id,name:i.nome,qty:i.qtd,price:Number(i.preco)})):null}));
@@ -295,12 +298,13 @@ function vAuth(){
 /* ---------- Estrutura comum ---------- */
 function vHeader(u){
   const first=u.name.split(' ')[0];
-  return `<header class="top"><div class="wm">${esc(S.cfg.name)}</div><div class="who"><span>${u.role==='admin'?'Administradora':esc(first)}</span>
+  return `<header class="top"><div class="wm">${esc(S.cfg.name)}</div><div class="who"><span>${u.role==='admin'?'Administradora':u.role==='staff'?'Equipe · '+esc(first):esc(first)}</span>
   ${u.role==='admin'?`<button class="icon" data-action="open" data-sheet="settings" aria-label="Ajustes">${I('sliders')}</button>`:''}
   <button class="icon" data-action="logout" aria-label="Sair">${I('logout')}</button></div></header>`;
 }
 const NAV={
   aluna:[['agenda','Agenda','calendar'],['loja','Materiais','bag'],['plano','Meu plano','card'],['hist','Histórico','clock']],
+  staff:[['inicio','Início','home'],['aulas','Aulas','calendar'],['alunas','Alunas','users'],['estoque','Estoque','box']],
   admin:[['inicio','Início','home'],['aulas','Aulas','calendar'],['alunas','Alunas','users'],['estoque','Estoque','box'],['pagamentos','Pagamentos','wallet']]
 };
 function vNav(u){
@@ -398,6 +402,13 @@ function vInicio(){
   if(top.length)h+=`<h2 class="sec">Aulas mais cheias</h2><div class="card list small">${top.map(c=>`<div class="row between"><span>${esc(c.theme)}</span><b>${taken(c.id)}/${c.spots}</b></div>`).join('')}</div>`;
   return h;
 }
+function vInicioEquipe(){
+  const week=S.classes.filter(c=>!c.canceled&&new Date(c.date)>new Date()&&new Date(c.date)<Date.now()+7*864e5).sort((a,b)=>new Date(a.date)-new Date(b.date));
+  const low=S.products.filter(p=>p.stock<=3);
+  let h=`<h2 class="sec" style="margin-top:4px">Próximos 7 dias</h2>`+(week.length?`<div class="list">${week.map(c=>`<button class="card row between" data-action="open" data-sheet="classAdmin" data-id="${c.id}"><span class="grow"><b>${esc(c.theme)}</b><span class="muted small" style="display:block">${esc(fmtDT(c.date))}</span>${c.obs?`<span class="small" style="display:block;margin-top:4px">Materiais: ${esc(c.obs)}</span>`:''}</span><span class="tag ${taken(c.id)>=c.spots?'warn':''}">${taken(c.id)}/${c.spots}</span></button>`).join('')}</div>`:empty('Agenda vazia','Crie as aulas da semana na aba Aulas.'));
+  if(low.length)h+=`<h2 class="sec">Estoque baixo</h2><div class="card list small">${low.map(p=>`<div class="row between"><span>${esc(p.name)}</span><span class="tag ${p.stock?'warn':'bad'}">${p.stock?p.stock+' un.':'Esgotado'}</span></div>`).join('')}</div>`;
+  return h;
+}
 function vAulas(){
   const up=S.classes.filter(c=>!c.canceled&&new Date(c.date)>new Date()).sort((a,b)=>new Date(a.date)-new Date(b.date));
   const past=S.classes.filter(c=>!c.canceled&&new Date(c.date)<=new Date()).sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,5);
@@ -408,7 +419,13 @@ function vAulas(){
 }
 function invitesBlock(){
   if(!S.invites.length)return '';
-  return `<div class="card"><b>Convites pendentes</b><p class="muted small" style="margin:4px 0 10px">A aluna usa o e-mail e o código para criar a própria senha.</p><div class="list">${S.invites.map(c=>`<div class="row between"><span class="grow"><b>${esc(c.name)}</b><span class="muted small" style="display:block">${esc(c.email)} · código ${esc(c.code)}</span></span><button class="btn ghost sm" data-action="open" data-sheet="invite" data-id="${c.id}">Enviar</button></div>`).join('')}</div></div>`;
+  return `<div class="card"><b>Convites pendentes</b><p class="muted small" style="margin:4px 0 10px">A aluna usa o e-mail e o código para criar a própria senha.</p><div class="list">${S.invites.map(c=>`<div class="row between"><span class="grow"><b>${esc(c.name)}</b>${c.role==='staff'?' <span class="tag">Equipe</span>':''}<span class="muted small" style="display:block">${esc(c.email)} · código ${esc(c.code)}</span></span><button class="btn ghost sm" data-action="open" data-sheet="invite" data-id="${c.id}">Enviar</button></div>`).join('')}</div></div>`;
+}
+function equipeBlock(){
+  if(me().role!=='admin')return '';
+  const eq=S.users.filter(u=>u.role==='staff');
+  if(!eq.length)return '';
+  return `<div class="card"><b>Equipe</b><p class="muted small" style="margin:4px 0 10px">Cria aulas, atualiza o estoque e cadastra alunas. Não vê pagamentos, planos nem relatórios.</p><div class="list">${eq.map(u=>`<div class="row between"><span class="grow"><b>${esc(u.name)}</b><span class="muted small" style="display:block">${esc(u.email)}</span></span><button class="btn danger sm" data-action="remove-staff" data-id="${u.id}" data-name="${esc(u.name)}">Remover acesso</button></div>`).join('')}</div></div>`;
 }
 function inviteMsg(c){
   const url=location.origin+location.pathname;
@@ -424,20 +441,21 @@ function sInvite(c){
 }
 function fInvite(){
   return `<form class="stack" data-form="inviteForm">
+  ${me().role==='admin'?`<label class="f">Tipo de acesso<select name="papel"><option value="aluna">Aluna</option><option value="funcionario">Funcionário(a) da equipe</option></select></label>`:`<input type="hidden" name="papel" value="aluna">`}
   <label class="f">Nome completo<input name="name" required></label>
   <label class="f">E-mail<input name="email" type="email" required></label>
   <label class="f">Telefone (WhatsApp)<input name="phone" type="tel"></label>
-  <p class="small muted" style="margin:0">Você recebe um código para enviar à aluna. Ela cria a própria senha no primeiro acesso.</p>
+  <p class="small muted" style="margin:0">${me().role==='admin'?'Funcionário(a) cria aulas, atualiza o estoque e cadastra alunas, mas não vê o financeiro. ':''}Você recebe um código para enviar à aluna. Ela cria a própria senha no primeiro acesso.</p>
   <button class="btn block" type="submit">Gerar convite</button></form>`;
 }
 function listStudents(){
   const q=ui.q.trim().toLowerCase();
   const st=S.users.filter(u=>u.role==='aluna'&&(!q||u.name.toLowerCase().includes(q)||u.email.toLowerCase().includes(q))).sort((a,b)=>a.name.localeCompare(b.name));
   const lab={ativa:['ok','Ativa'],vencida:['bad','Vencida'],aguardando:['warn','Aguardando'],cancelada:['mute','Cancelada'],sem:['mute','Sem plano']};
-  return st.length?st.map(u=>{const s=planStatus(u.id);return `<button class="card row between" data-action="open" data-sheet="student" data-id="${u.id}"><span class="grow"><b>${esc(u.name)}</b><span class="muted small" style="display:block">${esc(u.email)}</span></span><span class="tag ${lab[s][0]}">${lab[s][1]}</span></button>`;}).join(''):empty('Nenhuma aluna encontrada','Cadastre uma aluna ou mude a busca.');
+  return st.length?st.map(u=>{const s=planStatus(u.id);return `<button class="card row between" data-action="open" data-sheet="student" data-id="${u.id}"><span class="grow"><b>${esc(u.name)}</b><span class="muted small" style="display:block">${esc(u.email)}</span></span>${me().role==='admin'?`<span class="tag ${lab[s][0]}">${lab[s][1]}</span>`:''}</button>`;}).join(''):empty('Nenhuma aluna encontrada','Cadastre uma aluna ou mude a busca.');
 }
 function vAlunas(){
-  return `<div class="row between"><h2 class="sec" style="margin:0">Alunas</h2><button class="btn sm" data-action="open" data-sheet="inviteForm">${I('plus',16)} Nova</button></div>${invitesBlock()}
+  return `<div class="row between"><h2 class="sec" style="margin:0">Alunas</h2><button class="btn sm" data-action="open" data-sheet="inviteForm">${I('plus',16)} Nova</button></div>${invitesBlock()}${equipeBlock()}
   <input class="search" id="q" type="search" placeholder="Buscar por nome ou e-mail" value="${esc(ui.q)}" aria-label="Buscar aluna"><div class="list" id="studentList">${listStudents()}</div>`;
 }
 function vEstoque(){
@@ -470,7 +488,7 @@ function sheetHtml(u){
   else if(s.type==='studentForm'){const a=s.id?S.users.find(x=>x.id===s.id):null;title=a?'Editar aluna':'Nova aluna';body=fStudent(a);}
   else if(s.type==='student'){const a=S.users.find(x=>x.id===s.id);if(!a)return '';title=a.name;body=sStudent(a);}
   else if(s.type==='settings'){title='Ajustes';body=sSettings();}
-  else if(s.type==='inviteForm'){title='Nova aluna';body=fInvite();}
+  else if(s.type==='inviteForm'){title='Novo acesso';body=fInvite();}
   else if(s.type==='invite'){const c=S.invites.find(x=>x.id===s.id);if(!c)return '';title='Convite da aluna';body=sInvite(c);}
   else if(s.type==='planForm'){const p=s.id?S.plans.find(x=>x.id===s.id):null;title=p?'Editar plano':'Novo plano';body=fPlan(p);}
   return `<div class="overlay" data-action="close-sheet"></div><section class="sheet" role="dialog" aria-modal="true" aria-label="${esc(title)}" tabindex="-1"><div class="grab"></div><div class="head"><h2>${esc(title)}</h2>${close}</div>${body}</section>`;
@@ -479,6 +497,7 @@ function sClass(u,c){
   const info=reserveInfo(u,c),left=c.spots-taken(c.id);
   let h=`<p class="muted" style="margin:0">${esc(fmtDay(c.date))}, às ${fmtTime(c.date)}</p>
   <div class="card small"><div class="row between"><span>Tipo</span><b>${c.type==='workshop'?'Workshop':'Aula'}</b></div><div class="row between"><span>Vagas livres</span><b>${Math.max(left,0)} de ${c.spots}</b></div><div class="row between"><span>${c.type==='workshop'?'Valor':'Valor avulso'}</span><b>${brl(c.price)}</b></div></div>`;
+  if(c.obs)h+=`<div class="note"><b>Materiais e avisos</b><span style="white-space:pre-wrap">${esc(c.obs)}</span></div>`;
   if(info.state==='booked'){
     const late=(new Date(c.date)-new Date())/36e5<S.cfg.cancelHours&&info.b.status==='confirmada';
     h+=`<div class="note ${info.b.status==='confirmada'?'ok':'warn'}"><b>${info.b.status==='confirmada'?'Sua vaga está garantida':'Vaga reservada, aguardando PIX'}</b><span>${late?`Faltam menos de ${S.cfg.cancelHours} h: cancelar agora não devolve a aula.`:`Cancelamento sem perda até ${S.cfg.cancelHours} h antes da aula.`}</span></div>`;
@@ -511,10 +530,12 @@ function sCart(){
   <div class="row between"><b>Total</b><span class="price" style="font-size:20px">${brl(t.t)}</span></div><button class="btn block" data-action="cart-checkout">Gerar PIX</button>`;
 }
 function sClassAdmin(c){
-  const bs=S.bookings.filter(b=>b.classId===c.id&&(b.status==='confirmada'||b.status==='aguardando_pix'));
+  const isAdmin=me().role==='admin';
+  const bs=S.inscritas.filter(b=>b.classId===c.id);
   return `<p class="muted" style="margin:0">${esc(fmtDay(c.date))}, às ${fmtTime(c.date)} · ${c.type==='workshop'?'Workshop':'Aula'} · ${brl(c.price)}</p>
-  <div class="card"><div class="row between"><b>Inscritas</b><span class="tag">${bs.length}/${c.spots}</span></div><div class="list small" style="margin-top:8px">${bs.length?bs.map(b=>{const a=S.users.find(x=>x.id===b.userId);return `<div class="row between"><span>${esc(a?a.name:'—')}</span><span class="muted">${b.payment==='saldo'?'plano':'PIX'} · ${b.status==='confirmada'?'confirmada':'aguardando'}</span></div>`;}).join(''):'<span class="muted">Ninguém inscrita ainda.</span>'}</div></div>
-  <div class="row"><button class="btn ghost grow" data-action="open" data-sheet="classForm" data-id="${c.id}">Editar</button><button class="btn danger grow" data-action="cancel-class" data-id="${c.id}">Cancelar aula</button></div>`;
+  ${c.obs?`<div class="note"><b>Materiais e avisos</b><span style="white-space:pre-wrap">${esc(c.obs)}</span></div>`:''}
+  <div class="card"><div class="row between"><b>Inscritas</b><span class="tag">${bs.length}/${c.spots}</span></div><div class="list small" style="margin-top:8px">${bs.length?bs.map(b=>{const r=isAdmin?S.bookings.find(x=>x.id===b.id):null;return `<div class="row between"><span>${esc(b.name)}</span><span class="muted">${r?(r.payment==='saldo'?'plano · ':'PIX · '):''}${b.status==='confirmada'?'confirmada':'aguardando'}</span></div>`;}).join(''):'<span class="muted">Ninguém inscrita ainda.</span>'}</div></div>
+  <div class="row"><button class="btn ghost grow" data-action="open" data-sheet="classForm" data-id="${c.id}">Editar</button>${isAdmin?`<button class="btn danger grow" data-action="cancel-class" data-id="${c.id}">Cancelar aula</button>`:''}</div>`;
 }
 function fClass(c){
   const d=c?toLocalInput(c.date):toLocalInput(new Date(Date.now()+864e5).toISOString());
@@ -524,6 +545,7 @@ function fClass(c){
   <label class="f">Data e horário<input name="date" type="datetime-local" required value="${d}"></label>
   <label class="f">Vagas<input name="spots" type="number" min="1" required value="${c?c.spots:8}"></label>
   <label class="f">Valor avulso (R$)<input name="price" type="number" min="0" step="0.01" required value="${c?c.price:60}"></label>
+  <label class="f">Materiais necessários e avisos (opcional)<textarea name="obs" rows="3" placeholder="Ex.: trazer tesoura e tecido de algodão">${esc(c?c.obs:'')}</textarea></label>
   <button class="btn block" type="submit">Salvar aula</button></form>`;
 }
 function fProduct(p){
@@ -531,7 +553,7 @@ function fProduct(p){
   <label class="f">Nome<input name="name" required value="${esc(p?p.name:'')}"></label>
   <label class="f">Preço (R$)<input name="price" type="number" min="0" step="0.01" required value="${p?p.price:''}"></label>
   <label class="f">Quantidade em estoque<input name="stock" type="number" min="0" required value="${p?p.stock:0}"></label>
-  <button class="btn block" type="submit">Salvar produto</button>${p?`<button class="btn danger block" type="button" data-action="del-product" data-id="${p.id}">Excluir produto</button>`:''}</form>`;
+  <button class="btn block" type="submit">Salvar produto</button>${p&&me().role==='admin'?`<button class="btn danger block" type="button" data-action="del-product" data-id="${p.id}">Excluir produto</button>`:''}</form>`;
 }
 function fStudent(a){
   if(!a)return '';
@@ -541,7 +563,9 @@ function fStudent(a){
   <p class="small muted" style="margin:0">E-mail da conta: ${esc(a.email)}. Ela define a própria senha no primeiro acesso, com um convite.</p>
   <button class="btn block" type="submit">Salvar dados</button></form>`;
 }
+function waNum(t){let d=(t||'').replace(/\D/g,'');if(d&&d.length<=11)d='55'+d;return d;}
 function sStudent(a){
+  if(me().role!=='admin')return `<div class="card small"><div class="row between"><span>E-mail</span><b>${esc(a.email)}</b></div><div class="row between"><span>Telefone</span><b>${esc(a.phone||'—')}</b></div></div>${a.phone?`<a class="btn block" href="https://wa.me/${waNum(a.phone)}" target="_blank" rel="noopener">Chamar no WhatsApp</a>`:''}`;
   const st=planStatus(a.id),cy=activeCycle(a.id),pend=pendingCycle(a.id);
   const bs=S.bookings.filter(b=>b.userId===a.id).map(b=>({b,c:S.classes.find(c=>c.id===b.classId)})).filter(x=>x.c).sort((x,y)=>new Date(y.c.date)-new Date(x.c.date)).slice(0,5);
   const lab={ativa:['ok','Ativa'],vencida:['bad','Vencida'],aguardando:['warn','Aguardando pagamento'],cancelada:['mute','Cancelada'],sem:['mute','Sem plano']}[st];
@@ -582,12 +606,13 @@ function fPlan(p){
 
 /* ---------- Render ---------- */
 function view(u){
+  if(u.role==='staff')return ({inicio:vInicioEquipe,aulas:vAulas,alunas:vAlunas,estoque:vEstoque}[ui.tab]||vInicioEquipe)();
   if(u.role==='admin')return ({inicio:vInicio,aulas:vAulas,alunas:vAlunas,estoque:vEstoque,pagamentos:vPagamentos}[ui.tab]||vInicio)();
   return ({agenda:vAgenda,loja:vLoja,plano:vPlano,hist:vHist}[ui.tab]||vAgenda)(u);
 }
 function render(){
   const y=window.scrollY,u=me();
-  if(u&&!ui.tab)ui.tab=u.role==='admin'?'inicio':'agenda';
+  if(u&&!ui.tab)ui.tab=u.role==='aluna'?'agenda':'inicio';
   let html;
   if(ui.booting)html='<main class="auth"><p class="muted">Carregando…</p></main>';
   else if(!u)html=vAuth();
@@ -618,7 +643,7 @@ async function afterLogin(user){
   try{await rpc('atualizar_pendencias');}catch(e){}
   await refresh();
   if(!S.me)throw new Error('Perfil não encontrado. Confira se o script do banco de dados foi executado.');
-  ui.tab=S.me.role==='admin'?'inicio':'agenda';ui.sheet=null;ui.cart={};
+  ui.tab=S.me.role==='aluna'?'agenda':'inicio';ui.sheet=null;ui.cart={};
   window.scrollTo(0,0);
 }
 async function enter(fn){
@@ -672,6 +697,7 @@ async function act(a,d){
       return;}
     case 'copy-invite':{const c=S.invites.find(x=>x.id===d.id);if(!c)return;const m=inviteMsg(c);
       if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(m).then(()=>toast('Mensagem copiada.'),()=>toast('Não consegui copiar. Selecione o texto e copie.'));}else toast('Selecione o texto e copie.');return;}
+    case 'remove-staff':{if(!confirm(`Remover o acesso de equipe de ${d.name}?`))return;return run(()=>ck(sb.from('perfis').update({papel:'aluna'}).eq('id',d.id)),'Acesso removido. A pessoa passa a ser apenas aluna.');}
     case 'cancel-invite':return run(()=>ck(sb.from('convites').delete().eq('id',d.id)),'Convite cancelado.',()=>{ui.sheet=null;});
     case 'informed':return run(()=>rpc('avisar_pagamento',{p_id:d.id}),'Ateliê avisado. Aguarde a confirmação.');
     case 'subscribe':return run(()=>rpc('assinar_plano',{p_plano:d.plan}),null,id=>{ui.sheet={type:'pix',id};});
@@ -686,14 +712,14 @@ async function act(a,d){
 }
 async function submitForm(name,v){
   switch(name){
-    case 'inviteForm':return run(()=>rpc('criar_convite',{p_nome:v.name,p_email:v.email,p_telefone:v.phone||''}),'Convite criado. Envie o código para a aluna.',id=>{ui.sheet={type:'invite',id};});
+    case 'inviteForm':return run(()=>rpc('criar_convite',{p_nome:v.name,p_email:v.email,p_telefone:v.phone||'',p_papel:v.papel==='funcionario'?'funcionario':'aluna'}),'Convite criado. Envie o código para a aluna.',id=>{ui.sheet={type:'invite',id};});
     case 'login':return enter(()=>sb.auth.signInWithPassword({email:v.email.trim(),password:v.password}));
     case 'signup':return enter(()=>sb.auth.signUp({email:v.email.trim(),password:v.password,options:{data:{codigo:(v.codigo||'').trim()}}}));
     case 'classForm':{
       const date=new Date(v.date);if(isNaN(date)){toast('Informe uma data válida.');return;}
       const spots=Math.max(1,parseInt(v.spots,10)||1),price=Math.max(0,parseFloat(v.price)||0);
       if(v.id){const c=S.classes.find(x=>x.id===v.id);if(c&&spots<taken(c.id)){toast(`Já há ${taken(c.id)} inscritas. As vagas não podem ser menos que isso.`);return;}}
-      const row={tipo:v.type==='workshop'?'workshop':'regular',tema:v.theme.trim(),data_hora:date.toISOString(),vagas:spots,preco:price};
+      const row={tipo:v.type==='workshop'?'workshop':'regular',tema:v.theme.trim(),data_hora:date.toISOString(),vagas:spots,preco:price,observacao:(v.obs||'').trim()||null};
       return run(()=>ck(v.id?sb.from('aulas').update(row).eq('id',v.id):sb.from('aulas').insert(row)),v.id?'Aula atualizada.':'Aula publicada na agenda.',()=>{ui.sheet=null;});}
     case 'productForm':{
       const row={nome:v.name.trim(),preco:Math.max(0,parseFloat(v.price)||0),estoque:Math.max(0,parseInt(v.stock,10)||0)};
